@@ -4,7 +4,7 @@ import { createAgentRouter } from '../../src/routes/agent'
 
 // Fake agent for unit testing to avoid real API calls
 const fakeAgent = {
-  async generate({ prompt }: { prompt: string }) {
+  async generate({ prompt }: { prompt: string; stream?: boolean; webSearch?: boolean; provider?: string; model?: string }) {
     return { text: `MOCK: ${prompt}` }
   },
 }

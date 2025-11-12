@@ -23,25 +23,28 @@ app.get('/', (c: any) => {
 
 app.route('/agent', agentRoutes)
 
+const servers = []
+if (process.env.DOCS_BASE_URL) {
+  servers.push({ url: process.env.DOCS_BASE_URL, description: 'Configured via API_BASE_URL' })
+}
+
 // OpenAPI documentation
-app.doc('/docs.json', {
+app.doc('docs.json', {
   openapi: '3.0.0',
   info: {
     version: '1.0.0',
     title: 'AI Agents API',
   },
-  servers: [
-    { url: 'http://localhost:3000', description: 'Local development' },
-  ],
+  servers: servers,
   tags: [
     { name: 'Agent', description: 'Agent APIs' },
   ],
 })
 
 // Swagger UI
-app.get('/docs', swaggerUI({ url: '/docs.json' }))
+app.get('/docs', swaggerUI({ url: 'docs.json' }))
 
 const port = Number(process.env.PORT) || 3000
 Bun.serve({ port, fetch: app.fetch })
 const log = createLogger('app')
-log.info(`server ready at http://localhost:${port}`)
+log.info(`server ready at http://127.0.0.1:${port}`)

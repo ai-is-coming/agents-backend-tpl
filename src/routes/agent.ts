@@ -3,7 +3,13 @@ import { rootAgent as defaultAgent } from '../agents'
 import { AgentChatRequestSchema, AgentChatResponseSchema } from '../schemas/agent'
 
 type ChatAgent = {
-  generate: (input: { prompt: string }) => Promise<{ text: string }>
+  generate: (input: {
+    prompt: string
+    stream?: boolean
+    webSearch?: boolean
+    provider?: string
+    model?: string
+  }) => Promise<Response | { text: string }>
 }
 
 export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
@@ -36,8 +42,12 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
   })
 
   router.openapi(chatRoute, async (c: any) => {
-    const { prompt } = c.req.valid('json')
-    const result = await agent.generate({ prompt })
+    const { prompt, stream, webSearch, provider, model } = c.req.valid('json')
+
+    const result = await agent.generate({ prompt, stream, webSearch, provider, model })
+    if (result instanceof Response) {
+      return result
+    }
     return c.json({ text: result.text })
   })
 

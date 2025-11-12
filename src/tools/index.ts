@@ -9,6 +9,8 @@ export const weatherTool = tool({
     const log = createLogger('tool')
     log.info('tool call weather start')
     try {
+      // simulate latency for UI pending state
+      await new Promise((r) => setTimeout(r, 3000))
       const result = { forecast: `Sunny 25°C in ${city} (mock)` }
       log.info('tool call weather end')
       return result
