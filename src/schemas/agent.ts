@@ -3,6 +3,7 @@ import { z } from '@hono/zod-openapi'
 // Request schema for POST /agent/chat (JSON body)
 export const AgentChatRequestSchema = z
   .object({
+    sessionId: z.number().int().positive().openapi({ example: 123 }),
     prompt: z
       .string()
       .min(1)

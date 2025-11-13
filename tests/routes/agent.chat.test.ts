@@ -17,7 +17,7 @@ describe('POST /agent/chat', () => {
     const res = await app.request('/agent/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: 'Hello' }),
+      body: JSON.stringify({ sessionId: 1, prompt: 'Hello' }),
     })
 
     expect(res.status).toBe(200)

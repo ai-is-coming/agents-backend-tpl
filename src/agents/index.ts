@@ -14,12 +14,14 @@ export const rootAgent = {
     webSearch,
     provider,
     model,
+    abortSignal,
   }: {
     prompt: string
     stream?: boolean
     webSearch?: boolean
     provider?: string
     model?: string
+    abortSignal?: AbortSignal
   }): Promise<{ text: string } | Response> {
     const log = createLogger('agent')
     log.info('agent call rootAgent start')
@@ -35,6 +37,7 @@ export const rootAgent = {
         tools,
         stopWhen: stepCountIs(5),
         experimental_telemetry: getTelemetrySettings('root-agent'),
+        abortSignal,
       })
       log.info('agent call rootAgent end (stream)')
       // Return UI message stream so frontend can render tool steps, reasoning, etc.
@@ -51,6 +54,7 @@ export const rootAgent = {
       tools,
       stopWhen: stepCountIs(5),
       experimental_telemetry: getTelemetrySettings('root-agent'),
+      abortSignal,
     })
 
     log.info('agent call rootAgent end')

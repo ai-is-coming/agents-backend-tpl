@@ -2,12 +2,13 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { swaggerUI } from '@hono/swagger-ui'
 import agentRoutes from './routes/agent'
 import authRoutes from './routes/auth'
+import sessionRoutes from './routes/session'
 import { logEnvOnStartup } from './utils/env'
 import { initTracer } from './utils/tracer'
 import { createLogger } from './utils/logger'
 import { traceIdMiddleware } from './middleware/trace'
 import { authMiddleware } from './middleware/auth'
-import { runMigrations } from './db/migrate'
+// runMigrations will be imported dynamically inside bootstrap to avoid type resolution issues
 
 async function bootstrap() {
   // Log env and initialize telemetry early
@@ -19,7 +20,8 @@ async function bootstrap() {
 
   // Run DB migrations before serving
   try {
-    await runMigrations()
+    const mod = (await import('./db/migrate')) as any
+    await mod.runMigrations()
   } catch (err) {
     log.error({ err }, 'Database migration failed on startup')
     process.exit(1)
@@ -39,6 +41,7 @@ async function bootstrap() {
 
   app.route('/auth', authRoutes)
   app.route('/agent', agentRoutes)
+  app.route('/session', sessionRoutes)
 
   const servers = []
   if (process.env.DOCS_BASE_URL) {
@@ -56,6 +59,7 @@ async function bootstrap() {
     tags: [
       { name: 'Auth', description: 'Authentication APIs' },
       { name: 'Agent', description: 'Agent APIs' },
+      { name: 'Session', description: 'Session APIs' },
     ],
   })
 
