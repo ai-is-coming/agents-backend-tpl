@@ -43,9 +43,20 @@ export const rootAgent = {
 
     if (stream) {
       const result = messages && messages.length
-        ? streamText({ ...common, messages })
-        : streamText({ ...common, prompt })
-      log.info('agent call rootAgent end (stream)')
+        ? streamText({
+            ...common,
+            messages,
+            onFinish: () => {
+              log.info('agent call rootAgent end (stream)')
+            }
+          })
+        : streamText({
+            ...common,
+            prompt,
+            onFinish: () => {
+              log.info('agent call rootAgent end (stream)')
+            }
+          })
       // Return UI message stream so frontend can render tool steps, reasoning, etc.
       return result.toUIMessageStreamResponse({
         sendReasoning: true,
