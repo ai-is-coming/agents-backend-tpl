@@ -3,9 +3,7 @@ import { tools, webTools } from '../tools'
 import { getTelemetrySettings } from '../utils/tracer'
 import { createLogger } from '../utils/logger'
 import { getModel } from '../utils/model'
-
-const system =
-  'You are a helpful ai information assistant. Provide general information, not ai advice. Encourage users to consult professionals.'
+import { rootAgentPrompt } from '../prompts/root-agent'
 
 export const rootAgent = {
   async generate({
@@ -36,7 +34,7 @@ export const rootAgent = {
 
     const common = {
       model: selectedModel,
-      system,
+      system: rootAgentPrompt,
       tools: activeTools,
       stopWhen: stepCountIs(5),
       experimental_telemetry: getTelemetrySettings('root-agent'),
