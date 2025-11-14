@@ -94,11 +94,92 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
         },
       })
 
-	      // Abort controller to propagate explicit cancellation to the agent/LLM
-	      const serverAbort = new AbortController()
+      // Prepare recent conversation context (user/assistant/tool), limit via env CHAT_HISTORY_LIMIT
+      const limitFromEnv = Number(process.env.CHAT_HISTORY_LIMIT)
+      const historyLimit = Number.isFinite(limitFromEnv) && limitFromEnv > 0 ? Math.min(limitFromEnv, 1000) : 50
 
+      const history = await prisma.chatMessage.findMany({
+        where: { session_id: sessionId, role: { in: ['user', 'assistant', 'tool'] as any } },
+        orderBy: { id: 'desc' },
+        take: historyLimit,
+        select: { role: true, content: true },
+      })
+      history.reverse()
 
-      const result = await agent.generate({ prompt, stream, webSearch, provider, model, abortSignal: serverAbort.signal })
+      const messagesForModel: Array<{ role: 'user' | 'assistant' | 'tool'; content: any }> = []
+      for (let i = 0; i < history.length; i++) {
+        const m: any = history[i]
+        const anyContent: any = (m as any).content
+
+        if ((m as any).role === 'tool') {
+          const c: any = anyContent || {}
+          let toolCallId = String(c.toolCallId || '')
+          const toolName = String(c.name || c.toolName || 'unknown_tool')
+          if (!toolCallId) toolCallId = `hist_${i}`
+
+          // Prepare input part for the synthetic assistant tool-call
+          const inputVal = typeof c.input !== 'undefined' ? c.input : (c.inputText ?? undefined)
+          const inputPart = typeof inputVal === 'string' ? inputVal : (typeof inputVal !== 'undefined' ? inputVal : {})
+
+          // 1) Insert a synthetic assistant message that contains the tool-call part
+          messagesForModel.push({
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId,
+                toolName,
+                input: inputPart,
+              },
+            ],
+          })
+
+          // 2) Then insert the tool result message with matching id
+          let outputPart: any
+          if (typeof c.errorText !== 'undefined' && c.errorText !== null) {
+            outputPart = typeof c.errorText === 'string'
+              ? { type: 'error-text', value: c.errorText }
+              : { type: 'error-json', value: c.errorText }
+          } else if (typeof c.output !== 'undefined') {
+            outputPart = typeof c.output === 'string'
+              ? { type: 'text', value: c.output }
+              : { type: 'json', value: c.output }
+          } else if (typeof c.input !== 'undefined') {
+            outputPart = typeof c.input === 'string'
+              ? { type: 'text', value: c.input }
+              : { type: 'json', value: c.input }
+          } else {
+            outputPart = { type: 'json', value: {} }
+          }
+
+          messagesForModel.push({
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId,
+                toolName,
+                output: outputPart,
+              },
+            ],
+          })
+          continue
+        }
+
+        const text =
+          typeof anyContent?.text === 'string'
+            ? anyContent.text
+            : typeof anyContent === 'string'
+              ? anyContent
+              : JSON.stringify(anyContent)
+
+        messagesForModel.push({ role: (m as any).role as 'user' | 'assistant', content: text })
+      }
+
+      // Abort controller to propagate explicit cancellation to the agent/LLM
+      const serverAbort = new AbortController()
+
+      const result = await agent.generate({ prompt, stream, webSearch, provider, model, abortSignal: serverAbort.signal, messages: messagesForModel } as any)
 
       if (result instanceof Response) {
         // Pass through the stream to the client while accumulating assistant text,

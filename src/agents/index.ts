@@ -10,6 +10,7 @@ const system =
 export const rootAgent = {
   async generate({
     prompt,
+    messages,
     stream,
     webSearch,
     provider,
@@ -17,6 +18,7 @@ export const rootAgent = {
     abortSignal,
   }: {
     prompt: string
+    messages?: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: any }>
     stream?: boolean
     webSearch?: boolean
     provider?: string
@@ -29,16 +31,19 @@ export const rootAgent = {
     // select model via util (provider/model aware)
     const selectedModel = getModel({ provider, model })
 
+    const common = {
+      model: selectedModel,
+      system,
+      tools,
+      stopWhen: stepCountIs(5),
+      experimental_telemetry: getTelemetrySettings('root-agent'),
+      abortSignal,
+    } as const
+
     if (stream) {
-      const result = streamText({
-        model: selectedModel,
-        system,
-        prompt,
-        tools,
-        stopWhen: stepCountIs(5),
-        experimental_telemetry: getTelemetrySettings('root-agent'),
-        abortSignal,
-      })
+      const result = messages && messages.length
+        ? streamText({ ...common, messages })
+        : streamText({ ...common, prompt })
       log.info('agent call rootAgent end (stream)')
       // Return UI message stream so frontend can render tool steps, reasoning, etc.
       return result.toUIMessageStreamResponse({
@@ -47,15 +52,9 @@ export const rootAgent = {
       })
     }
 
-    const result = await generateText({
-      model: selectedModel,
-      system,
-      prompt,
-      tools,
-      stopWhen: stepCountIs(5),
-      experimental_telemetry: getTelemetrySettings('root-agent'),
-      abortSignal,
-    })
+    const result = messages && messages.length
+      ? await generateText({ ...common, messages })
+      : await generateText({ ...common, prompt })
 
     log.info('agent call rootAgent end')
     return { text: result.text }
