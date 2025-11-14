@@ -352,7 +352,7 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                               // finalize current text segment before tool
                               await flushAssistantAndReset()
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id))
+                              if (!toolState.has(id)) {
                                 toolState.set(id, {
                                   id: null,
                                   name: obj.toolName || '',
@@ -360,15 +360,18 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                                   lastLen: 0,
                                   lastAt: 0,
                                 })
-                              const st = toolState.get(id)!
-                              st.name = obj.toolName || st.name
-                              st.status = 'input-streaming'
-                              await persistTool(id, true)
+                              }
+                              const st = toolState.get(id)
+                              if (st) {
+                                st.name = obj.toolName || st.name
+                                st.status = 'input-streaming'
+                                await persistTool(id, true)
+                              }
                               break
                             }
                             case 'tool-input-delta': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id))
+                              if (!toolState.has(id)) {
                                 toolState.set(id, {
                                   id: null,
                                   name: obj.toolName || '',
@@ -376,56 +379,71 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                                   lastLen: 0,
                                   lastAt: 0,
                                 })
-                              const st = toolState.get(id)!
-                              st.name = obj.toolName || st.name
-                              st.inputText = (st.inputText || '') + (obj.delta || '')
-                              st.status = 'input-streaming'
-                              await persistTool(id)
+                              }
+                              const st = toolState.get(id)
+                              if (st) {
+                                st.name = obj.toolName || st.name
+                                st.inputText = (st.inputText || '') + (obj.delta || '')
+                                st.status = 'input-streaming'
+                                await persistTool(id)
+                              }
                               break
                             }
                             case 'tool-input-available': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id))
+                              if (!toolState.has(id)) {
                                 toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
-                              const st = toolState.get(id)!
-                              st.name = obj.toolName || st.name
-                              st.input = obj.input
-                              st.status = 'input-available'
-                              await persistTool(id, true)
+                              }
+                              const st = toolState.get(id)
+                              if (st) {
+                                st.name = obj.toolName || st.name
+                                st.input = obj.input
+                                st.status = 'input-available'
+                                await persistTool(id, true)
+                              }
                               break
                             }
                             case 'tool-input-error': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id))
+                              if (!toolState.has(id)) {
                                 toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
-                              const st = toolState.get(id)!
-                              st.name = obj.toolName || st.name
-                              st.input = obj.input ?? st.input
-                              st.errorText = obj.errorText || 'Tool input error'
-                              st.status = 'output-error'
-                              await persistTool(id, true)
+                              }
+                              const st = toolState.get(id)
+                              if (st) {
+                                st.name = obj.toolName || st.name
+                                st.input = obj.input ?? st.input
+                                st.errorText = obj.errorText || 'Tool input error'
+                                st.status = 'output-error'
+                                await persistTool(id, true)
+                              }
                               break
                             }
                             case 'tool-output-available': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id))
+                              if (!toolState.has(id)) {
                                 toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
-                              const st = toolState.get(id)!
-                              st.name = obj.toolName || st.name
-                              st.output = obj.output
-                              st.status = 'output-available'
-                              await persistTool(id, true)
+                              }
+                              const st = toolState.get(id)
+                              if (st) {
+                                st.name = obj.toolName || st.name
+                                st.output = obj.output
+                                st.status = 'output-available'
+                                await persistTool(id, true)
+                              }
                               break
                             }
                             case 'tool-output-error': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id))
+                              if (!toolState.has(id)) {
                                 toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
-                              const st = toolState.get(id)!
-                              st.name = obj.toolName || st.name
-                              st.errorText = obj.errorText || 'Tool execution error'
-                              st.status = 'output-error'
-                              await persistTool(id, true)
+                              }
+                              const st = toolState.get(id)
+                              if (st) {
+                                st.name = obj.toolName || st.name
+                                st.errorText = obj.errorText || 'Tool execution error'
+                                st.status = 'output-error'
+                                await persistTool(id, true)
+                              }
                               break
                             }
                             default:
