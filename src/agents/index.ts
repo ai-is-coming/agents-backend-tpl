@@ -1,5 +1,5 @@
 import { generateText, stepCountIs, streamText } from 'ai'
-import { tools } from '../tools'
+import { tools, webTools } from '../tools'
 import { getTelemetrySettings } from '../utils/tracer'
 import { createLogger } from '../utils/logger'
 import { getModel } from '../utils/model'
@@ -31,10 +31,13 @@ export const rootAgent = {
     // select model via util (provider/model aware)
     const selectedModel = getModel({ provider, model })
 
+    // Conditionally enable web search tools
+    const activeTools = webSearch ? { ...tools, ...webTools } : tools
+
     const common = {
       model: selectedModel,
       system,
-      tools,
+      tools: activeTools,
       stopWhen: stepCountIs(5),
       experimental_telemetry: getTelemetrySettings('root-agent'),
       abortSignal,
