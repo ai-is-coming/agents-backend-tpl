@@ -16,4 +16,3 @@ export const LoginResponseSchema = z.object({
 
 export type LoginRequest = z.infer<typeof LoginRequestSchema>
 export type LoginResponse = z.infer<typeof LoginResponseSchema>
-

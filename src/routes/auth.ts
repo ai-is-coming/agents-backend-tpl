@@ -1,10 +1,11 @@
-import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
+import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
 import { LoginRequestSchema, LoginResponseSchema } from '../schemas/auth'
+import type { AppEnv } from '../types/hono'
 import { createLogger } from '../utils/logger'
 
 const log = createLogger('auth')
 
-const router = new OpenAPIHono()
+const router = new OpenAPIHono<AppEnv>()
 
 const loginRoute = createRoute({
   method: 'post',
@@ -35,7 +36,7 @@ const loginRoute = createRoute({
   },
 })
 
-router.openapi(loginRoute, async (c: any) => {
+router.openapi(loginRoute, async (c) => {
   const { email } = c.req.valid('json')
 
   log.info({ email }, 'User login')
@@ -45,4 +46,3 @@ router.openapi(loginRoute, async (c: any) => {
 })
 
 export default router
-

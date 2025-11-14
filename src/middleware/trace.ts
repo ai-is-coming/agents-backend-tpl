@@ -1,8 +1,7 @@
-import { createMiddleware } from 'hono/factory'
-import type { MiddlewareHandler } from 'hono'
+import { context as otelContext, propagation, SpanKind, SpanStatusCode, TraceFlags, trace } from '@opentelemetry/api'
 import { RandomIdGenerator } from '@opentelemetry/sdk-trace-base'
-import { context as otelContext, propagation, trace, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
-
+import type { MiddlewareHandler } from 'hono'
+import { createMiddleware } from 'hono/factory'
 
 const otelIdGen = new RandomIdGenerator()
 
@@ -33,17 +32,21 @@ export function traceIdMiddleware(): MiddlewareHandler {
     // 3) Start a server span as the active span for the request
     const tracer = trace.getTracer('http-server')
     const url = new URL(c.req.url)
-    const span = tracer.startSpan(`${c.req.method} ${url.pathname}`, {
-      kind: SpanKind.SERVER,
-      attributes: {
-        'http.method': c.req.method,
-        'url.path': url.pathname,
-        'url.query': url.search,
-        'server.address': url.hostname,
-        ...(url.port ? { 'server.port': Number(url.port) } : {}),
-        'user_agent.original': c.req.header('user-agent') || '',
+    const span = tracer.startSpan(
+      `${c.req.method} ${url.pathname}`,
+      {
+        kind: SpanKind.SERVER,
+        attributes: {
+          'http.method': c.req.method,
+          'url.path': url.pathname,
+          'url.query': url.search,
+          'server.address': url.hostname,
+          ...(url.port ? { 'server.port': Number(url.port) } : {}),
+          'user_agent.original': c.req.header('user-agent') || '',
+        },
       },
-    }, parentCtx)
+      parentCtx
+    )
 
     const spanCtx = span.spanContext()
     const traceId = spanCtx.traceId
@@ -62,7 +65,7 @@ export function traceIdMiddleware(): MiddlewareHandler {
           span.setStatus({ code: SpanStatusCode.ERROR })
         }
       } catch (err) {
-        span.recordException(err as any)
+        span.recordException(err as Error)
         span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) })
         throw err
       } finally {
@@ -71,4 +74,3 @@ export function traceIdMiddleware(): MiddlewareHandler {
     })
   })
 }
-

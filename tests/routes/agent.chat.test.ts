@@ -1,10 +1,18 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, expect, it } from 'bun:test'
 import { Hono } from 'hono'
 import { createAgentRouter } from '../../src/routes/agent'
 
 // Fake agent for unit testing to avoid real API calls
 const fakeAgent = {
-  async generate({ prompt }: { prompt: string; stream?: boolean; webSearch?: boolean; provider?: string; model?: string }) {
+  async generate({
+    prompt,
+  }: {
+    prompt: string
+    stream?: boolean
+    webSearch?: boolean
+    provider?: string
+    model?: string
+  }) {
     return { text: `MOCK: ${prompt}` }
   },
 }
@@ -17,12 +25,11 @@ describe('POST /agent/chat', () => {
     const res = await app.request('/agent/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: 1, prompt: 'Hello' }),
+      body: JSON.stringify({ sessionId: '1', prompt: 'Hello' }),
     })
 
     expect(res.status).toBe(200)
-    const data = await res.json()
+    const data = (await res.json()) as { text: string }
     expect(data.text).toBe('MOCK: Hello')
   })
 })
-

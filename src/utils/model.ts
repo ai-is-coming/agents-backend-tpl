@@ -1,8 +1,9 @@
 import { createDeepSeek } from '@ai-sdk/deepseek'
 import { createOpenAI } from '@ai-sdk/openai'
+import type { LanguageModelV2 } from '@ai-sdk/provider'
 
 // simple pluggable registry so future providers can be added without changing call sites
-export type ProviderFactory = (opts: { model?: string }) => any
+export type ProviderFactory = (opts: { model?: string }) => LanguageModelV2
 const registry = new Map<string, ProviderFactory>()
 
 // built-in providers

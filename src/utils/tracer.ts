@@ -1,10 +1,10 @@
+import type { Tracer } from '@opentelemetry/api'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
+import { resourceFromAttributes } from '@opentelemetry/resources'
 import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-base'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
-import { resourceFromAttributes } from '@opentelemetry/resources'
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { createLogger } from './logger'
-
 
 /* OpenTelemetry tracer bootstrap with env-based config.
  * - Enable/disable via TRACER_ENABLED (true/false/1/0/yes/no)
@@ -17,7 +17,7 @@ import { createLogger } from './logger'
 
 // NOTE: Using static imports for @opentelemetry/* as requested. Ensure deps are installed when TRACER_ENABLED=true.
 
-let tracerRef: any | undefined
+let tracerRef: Tracer | undefined
 
 function truthyEnv(val: string | undefined): boolean {
   if (!val) return false
@@ -85,14 +85,16 @@ export async function initTracer(): Promise<void> {
 
   const endpoint = getOtlpEndpoint()
   if (!endpoint) {
-    log.warn('TRACER_ENABLED=true but no OTLP endpoint configured. Set TRACER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.')
+    log.warn(
+      'TRACER_ENABLED=true but no OTLP endpoint configured. Set TRACER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.'
+    )
   }
 
   try {
     const serviceName = getServiceName()
     const sampleRatio = getSampleRatio()
 
-    const exporterOptions: any = {}
+    const exporterOptions: { url?: string; headers?: Record<string, string> } = {}
     if (endpoint) exporterOptions.url = endpoint
     const headers = getOtlpHeaders()
     if (headers) exporterOptions.headers = headers
@@ -111,11 +113,14 @@ export async function initTracer(): Promise<void> {
     provider.register()
     tracerRef = provider.getTracer(serviceName)
 
-    log.info({
-      endpoint: endpoint || '(default exporter endpoint)',
-      service: serviceName,
-      sampleRatio,
-    }, 'initialized')
+    log.info(
+      {
+        endpoint: endpoint || '(default exporter endpoint)',
+        service: serviceName,
+        sampleRatio,
+      },
+      'initialized'
+    )
   } catch (err) {
     log.warn({ err }, 'failed to initialize; telemetry will be disabled.')
     tracerRef = undefined
@@ -134,7 +139,19 @@ function recordOutputsDefault(): boolean {
   return truthyEnv(getEnv('TRACER_RECORD_OUTPUTS'))
 }
 
-export function getTelemetrySettings(functionId?: string): any | undefined {
+export function getTelemetrySettings(functionId?: string):
+  | {
+      isEnabled: boolean
+      recordInputs: boolean
+      recordOutputs: boolean
+      functionId?: string
+      tracer: Tracer | undefined
+      metadata: {
+        service: string
+        env: string
+      }
+    }
+  | undefined {
   if (!telemetryEnabled()) return undefined
   // Only enable if tracer was initialized successfully
   const ready = !!tracerRef
@@ -151,7 +168,6 @@ export function getTelemetrySettings(functionId?: string): any | undefined {
   }
 }
 
-export function getTracer(): any | undefined {
+export function getTracer(): Tracer | undefined {
   return tracerRef
 }
-

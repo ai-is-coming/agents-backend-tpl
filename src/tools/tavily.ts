@@ -5,7 +5,7 @@ import { createLogger } from '../utils/logger'
 // Tavily Search tool covering all supported request fields.
 // Reference: https://docs.tavily.com/documentation/api-reference/endpoint/search
 export const tavilySearchTool = tool({
-  description: 'Search the web using Tavily and return Tavily\'s structured response (answer, results, images, etc.)',
+  description: "Search the web using Tavily and return Tavily's structured response (answer, results, images, etc.)",
   inputSchema: z.object({
     // Required
     query: z.string().min(1).describe('The search query to execute with Tavily.'),
@@ -14,15 +14,41 @@ export const tavilySearchTool = tool({
     auto_parameters: z.boolean().optional().describe('Let Tavily auto-configure parameters for the query (beta).'),
     topic: z.enum(['general', 'news', 'finance']).optional().describe('Category of the search.'),
     search_depth: z.enum(['basic', 'advanced']).optional().describe('basic (1 credit) or advanced (2 credits).'),
-    chunks_per_source: z.number().int().min(1).max(3).optional().describe('Max relevant chunks per source (advanced only).'),
+    chunks_per_source: z
+      .number()
+      .int()
+      .min(1)
+      .max(3)
+      .optional()
+      .describe('Max relevant chunks per source (advanced only).'),
     max_results: z.number().int().min(0).max(20).optional().describe('Max number of results to return.'),
-    time_range: z.enum(['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y']).optional().describe('Filter by publish/update time.'),
-    start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD. Only results after this date.'),
-    end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD. Only results before this date.'),
-    include_answer: z.union([z.boolean(), z.enum(['basic', 'advanced'])]).optional().describe('Include LLM-generated answer.'),
-    include_raw_content: z.union([z.boolean(), z.enum(['markdown', 'text'])]).optional().describe('Include cleaned page content.'),
+    time_range: z
+      .enum(['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'])
+      .optional()
+      .describe('Filter by publish/update time.'),
+    start_date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe('YYYY-MM-DD. Only results after this date.'),
+    end_date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe('YYYY-MM-DD. Only results before this date.'),
+    include_answer: z
+      .union([z.boolean(), z.enum(['basic', 'advanced'])])
+      .optional()
+      .describe('Include LLM-generated answer.'),
+    include_raw_content: z
+      .union([z.boolean(), z.enum(['markdown', 'text'])])
+      .optional()
+      .describe('Include cleaned page content.'),
     include_images: z.boolean().optional().describe('Also perform image search and include results.'),
-    include_image_descriptions: z.boolean().optional().describe('If include_images, add descriptive text for each image.'),
+    include_image_descriptions: z
+      .boolean()
+      .optional()
+      .describe('If include_images, add descriptive text for each image.'),
     include_favicon: z.boolean().optional().describe('Include favicon URL for each result.'),
     include_domains: z.array(z.string()).optional().describe('List of domains to specifically include (<= 300).'),
     exclude_domains: z.array(z.string()).optional().describe('List of domains to specifically exclude (<= 150).'),
@@ -40,7 +66,7 @@ export const tavilySearchTool = tool({
     }
 
     // Build request body by omitting undefined values
-    const body: Record<string, any> = {}
+    const body: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(input)) {
       if (typeof v !== 'undefined') body[k] = v
     }
@@ -51,8 +77,8 @@ export const tavilySearchTool = tool({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          Accept: 'application/json',
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       })
@@ -73,4 +99,3 @@ export const tavilySearchTool = tool({
     }
   },
 })
-

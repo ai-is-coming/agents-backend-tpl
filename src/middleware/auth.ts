@@ -1,16 +1,11 @@
-import { createMiddleware } from 'hono/factory'
 import type { MiddlewareHandler } from 'hono'
+import { createMiddleware } from 'hono/factory'
 import { createLogger } from '../utils/logger'
 
 const log = createLogger('auth')
 
 // Whitelist paths that don't require authentication
-const WHITELIST_PATHS = [
-  '/auth/login',
-  '/docs',
-  '/docs.json',
-  '/',
-]
+const WHITELIST_PATHS = ['/auth/login', '/docs', '/docs.json', '/']
 
 /**
  * Authentication middleware
@@ -57,4 +52,3 @@ export function authMiddleware(): MiddlewareHandler {
     await next()
   })
 }
-

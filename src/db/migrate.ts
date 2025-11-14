@@ -1,11 +1,12 @@
+import path from 'node:path'
+import type { Pool as PgPool } from 'pg'
 import Postgrator from 'postgrator'
-import path from 'path'
 import { createLogger } from '../utils/logger'
 
 const log = createLogger('migrate')
 
 async function ensureDatabaseExists(connectionString: string) {
-  const { Pool } = (await import('pg')) as any
+  const { Pool } = (await import('pg')) as { Pool: typeof PgPool }
 
   // Parse database name from connection string
   const dbNameMatch = connectionString.match(/\/([^/?]+)(\?|$)/)
@@ -21,10 +22,7 @@ async function ensureDatabaseExists(connectionString: string) {
 
   try {
     // Check if database exists
-    const result = await adminPool.query(
-      'SELECT 1 FROM pg_database WHERE datname = $1',
-      [dbName]
-    )
+    const result = await adminPool.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName])
 
     if (result.rows.length === 0) {
       log.info({ dbName }, 'Database does not exist, creating...')
@@ -55,7 +53,7 @@ export async function runMigrations() {
   // We run `make dev` from agents-backend-tpl, so cwd is the project root here.
   // Do NOT prefix with 'agents-backend-tpl' again, otherwise the path is duplicated.
   const migrationsDirectory = path.join(process.cwd(), 'src', 'db', 'migrations')
-  const { Pool } = (await import('pg')) as any
+  const { Pool } = (await import('pg')) as { Pool: typeof PgPool }
   const pool = new Pool({ connectionString })
 
   const postgrator = new Postgrator({
@@ -74,8 +72,8 @@ export async function runMigrations() {
   try {
     const result = await postgrator.migrate()
     const latest = Array.isArray(result) ? result[result.length - 1] : result
-    if (latest) {
-      log.info({ version: (latest as any).version }, 'migrations applied')
+    if (latest && typeof latest === 'object' && 'version' in latest) {
+      log.info({ version: latest.version }, 'migrations applied')
     } else {
       log.info('no migrations to run')
     }
@@ -83,4 +81,3 @@ export async function runMigrations() {
     await pool.end()
   }
 }
-

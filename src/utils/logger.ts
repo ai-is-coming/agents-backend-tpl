@@ -1,5 +1,5 @@
-import pino from 'pino'
 import { context as otelContext, trace } from '@opentelemetry/api'
+import pino from 'pino'
 
 function truthyEnv(val: string | undefined): boolean {
   if (!val) return false
@@ -8,11 +8,7 @@ function truthyEnv(val: string | undefined): boolean {
 }
 
 function getServiceName(): string {
-  return (
-    process.env.TRACER_SERVICE_NAME ||
-    process.env.OTEL_SERVICE_NAME ||
-    'ai-agents'
-  )
+  return process.env.TRACER_SERVICE_NAME || process.env.OTEL_SERVICE_NAME || 'ai-agents'
 }
 
 function buildCaller(): string {
@@ -65,14 +61,15 @@ export const logger = pino({
   },
   timestamp: pino.stdTimeFunctions.isoTime,
   hooks: {
-    logMethod(args: any[], method: any) {
+    logMethod(args: unknown[], method: pino.LogFn) {
       const caller = enableCaller ? buildCaller() : undefined
-      const isObj = (v: any) => v && typeof v === 'object' && !Array.isArray(v)
+      const isObj = (v: unknown): v is Record<string, unknown> =>
+        v !== null && typeof v === 'object' && !Array.isArray(v)
 
       // Read active OpenTelemetry span traceId (if any)
       let traceId: string | undefined
       try {
-        const span = trace.getSpan(otelContext.active() as any)
+        const span = trace.getSpan(otelContext.active())
         traceId = span?.spanContext().traceId
       } catch {
         // ignore
@@ -81,8 +78,8 @@ export const logger = pino({
       // Determine scope from child bindings
       let scope: string | undefined
       try {
-        const b = (this as any)?.bindings?.()
-        scope = b?.scope
+        const bindings = (this as { bindings?: () => { scope?: string } })?.bindings?.()
+        scope = bindings?.scope
       } catch {
         // ignore
       }
@@ -95,7 +92,10 @@ export const logger = pino({
       if (isPretty) {
         // find first context object
         for (let i = 0; i < args.length; i++) {
-          if (isObj(args[i])) { ctxIndex = i; break }
+          if (isObj(args[i])) {
+            ctxIndex = i
+            break
+          }
         }
 
         // service/env/caller first
@@ -105,21 +105,21 @@ export const logger = pino({
           `service:${svc}`,
           `env:${env}`,
           ...(traceId ? [`tid:${traceId}`] : []),
-          ...(caller ? [`caller:${caller}`] : [])
+          ...(caller ? [`caller:${caller}`] : []),
         ]
 
         const tailPairs: string[] = []
         if (ctxIndex >= 0) {
-          const ctx = args[ctxIndex] as Record<string, any>
+          const ctx = args[ctxIndex] as Record<string, unknown>
           const reserved = new Set(['caller', 'service', 'env', 'scope', 'pid', 'hostname', 'time', 'level'])
           const entries = Object.entries(ctx).filter(([k]) => !reserved.has(k))
           entries.sort(([a], [b]) => a.localeCompare(b))
           for (const [k, v] of entries) {
-            const val = v instanceof Error ? v.message : (typeof v === 'object' ? JSON.stringify(v) : String(v))
+            const val = v instanceof Error ? v.message : typeof v === 'object' ? JSON.stringify(v) : String(v)
             tailPairs.push(`${k}:${val}`)
           }
           // Clear object keys to avoid pino-pretty printing them again
-          for (const k of Object.keys(ctx)) delete (ctx as any)[k]
+          for (const k of Object.keys(ctx)) delete ctx[k]
         }
 
         const allPairs = [...headPairs, ...tailPairs]
@@ -130,13 +130,13 @@ export const logger = pino({
         }
       } else {
         // Attach caller/traceId fields in JSON mode (if present)
-        const extras: Record<string, any> = {}
+        const extras: Record<string, unknown> = {}
         if (caller) extras.caller = caller
         if (traceId) extras.tid = traceId
         if (Object.keys(extras).length) {
           if (args.length > 0 && isObj(args[0])) {
             for (const [k, v] of Object.entries(extras)) {
-              if (!(args[0] as any)[k]) (args[0] as any)[k] = v
+              if (!args[0][k]) args[0][k] = v
             }
           } else {
             args.unshift(extras)
@@ -147,19 +147,22 @@ export const logger = pino({
       // Prefix message string and append extra; scope must be directly before msg (e.g., [scope]msg)
       let msgIndex = -1
       for (let i = args.length - 1; i >= 0; i--) {
-        if (typeof args[i] === 'string') { msgIndex = i; break }
+        if (typeof args[i] === 'string') {
+          msgIndex = i
+          break
+        }
       }
       if (msgIndex >= 0) {
         let combined = prefix + (args[msgIndex] as string) + extraStr
-        if (isPretty) combined = '\b ' + combined // overwrite the colon after level and insert a space
-        args[msgIndex] = isPretty ? (combined.endsWith('\n') ? combined : combined + '\n') : combined
+        if (isPretty) combined = `\b ${combined}` // overwrite the colon after level and insert a space
+        args[msgIndex] = isPretty ? (combined.endsWith('\n') ? combined : `${combined}\n`) : combined
       } else {
         let combined = (prefix + extraStr).trim()
-        if (isPretty) combined = '\b ' + combined // same colon overwrite when no explicit msg string
-        args.push(isPretty ? (combined.endsWith('\n') ? combined : combined + '\n') : combined)
+        if (isPretty) combined = `\b ${combined}` // same colon overwrite when no explicit msg string
+        args.push(isPretty ? (combined.endsWith('\n') ? combined : `${combined}\n`) : combined)
       }
 
-      return (method as any).apply(this, args as any)
+      return method.apply(this, args as Parameters<pino.LogFn>)
     },
   },
   transport,
@@ -170,4 +173,3 @@ export function createLogger(scope: string) {
 }
 
 export type Logger = typeof logger
-

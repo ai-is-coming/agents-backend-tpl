@@ -24,7 +24,9 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.3.5",
     "@types/bun": "latest",
+    "@types/pg": "^8.15.6",
     "pino-pretty": "^13.1.2",
     "prisma": "^6.19.0"
   }

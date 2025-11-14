@@ -61,3 +61,69 @@ test:
 		echo "bun not found. Please run 'make init' to install Bun"; \
 		exit 1; \
 	fi
+
+.PHONY: db-gen
+
+# Pull database schema using Prisma
+db-gen:
+	npx prisma db pull --schema=src/db/prisma/schema.prisma
+	npx prisma generate --schema=src/db/prisma/schema.prisma
+
+.PHONY: db-migrate
+
+# Run database migrations (auto-create database if not exists)
+db-migrate:
+	@if command -v bun >/dev/null 2>&1; then \
+		bun run src/db/run-migrate.ts; \
+	else \
+		echo "bun not found. Please run 'make init' to install Bun"; \
+		exit 1; \
+	fi
+
+.PHONY: lint
+
+# Run linter and formatter checks (without fixing)
+lint:
+	@if command -v bun >/dev/null 2>&1; then \
+		echo "Running Biome linter and formatter checks..."; \
+		bunx biome check --diagnostic-level=info ./src ./tests; \
+	else \
+		echo "bun not found. Please run 'make init' to install Bun"; \
+		exit 1; \
+	fi
+
+.PHONY: lint-fix
+
+# Run linter and formatter with auto-fix
+lint-fix:
+	@if command -v bun >/dev/null 2>&1; then \
+		echo "Running Biome linter and formatter with auto-fix..."; \
+		bunx biome check --write --unsafe ./src ./tests; \
+	else \
+		echo "bun not found. Please run 'make init' to install Bun"; \
+		exit 1; \
+	fi
+
+.PHONY: format
+
+# Format code only
+format:
+	@if command -v bun >/dev/null 2>&1; then \
+		echo "Formatting code with Biome..."; \
+		bunx biome format --write ./src ./tests; \
+	else \
+		echo "bun not found. Please run 'make init' to install Bun"; \
+		exit 1; \
+	fi
+
+.PHONY: typecheck
+
+# Run TypeScript type checking
+typecheck:
+	@if command -v bun >/dev/null 2>&1; then \
+		echo "Running TypeScript type checking..."; \
+		bunx tsc --noEmit; \
+	else \
+		echo "bun not found. Please run 'make init' to install Bun"; \
+		exit 1; \
+	fi

@@ -1,9 +1,10 @@
-import { generateText, stepCountIs, streamText } from 'ai'
+import type { UIMessage } from 'ai'
+import { convertToModelMessages, generateText, stepCountIs, streamText } from 'ai'
+import { rootAgentPrompt } from '../prompts/root-agent'
 import { tools, webTools } from '../tools'
-import { getTelemetrySettings } from '../utils/tracer'
 import { createLogger } from '../utils/logger'
 import { getModel } from '../utils/model'
-import { rootAgentPrompt } from '../prompts/root-agent'
+import { getTelemetrySettings } from '../utils/tracer'
 
 export const rootAgent = {
   async generate({
@@ -16,7 +17,7 @@ export const rootAgent = {
     abortSignal,
   }: {
     prompt: string
-    messages?: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: any }>
+    messages?: UIMessage[]
     stream?: boolean
     webSearch?: boolean
     provider?: string
@@ -42,20 +43,20 @@ export const rootAgent = {
     } as const
 
     if (stream) {
-      const result = messages && messages.length
+      const result = messages?.length
         ? streamText({
             ...common,
-            messages,
+            messages: convertToModelMessages(messages),
             onFinish: () => {
               log.info('agent call rootAgent end (stream)')
-            }
+            },
           })
         : streamText({
             ...common,
             prompt,
             onFinish: () => {
               log.info('agent call rootAgent end (stream)')
-            }
+            },
           })
       // Return UI message stream so frontend can render tool steps, reasoning, etc.
       return result.toUIMessageStreamResponse({
@@ -64,8 +65,8 @@ export const rootAgent = {
       })
     }
 
-    const result = messages && messages.length
-      ? await generateText({ ...common, messages })
+    const result = messages?.length
+      ? await generateText({ ...common, messages: convertToModelMessages(messages) })
       : await generateText({ ...common, prompt })
 
     log.info('agent call rootAgent end')

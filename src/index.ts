@@ -1,13 +1,15 @@
-import { OpenAPIHono } from '@hono/zod-openapi'
 import { swaggerUI } from '@hono/swagger-ui'
+import { OpenAPIHono } from '@hono/zod-openapi'
+import { authMiddleware } from './middleware/auth'
+import { traceIdMiddleware } from './middleware/trace'
 import agentRoutes from './routes/agent'
 import authRoutes from './routes/auth'
 import sessionRoutes from './routes/session'
+import type { AppContext, AppEnv } from './types/hono'
 import { logEnvOnStartup } from './utils/env'
-import { initTracer } from './utils/tracer'
 import { createLogger } from './utils/logger'
-import { traceIdMiddleware } from './middleware/trace'
-import { authMiddleware } from './middleware/auth'
+import { initTracer } from './utils/tracer'
+
 // runMigrations will be imported dynamically inside bootstrap to avoid type resolution issues
 
 async function bootstrap() {
@@ -20,14 +22,14 @@ async function bootstrap() {
 
   // Run DB migrations before serving
   try {
-    const mod = (await import('./db/migrate')) as any
+    const mod = (await import('./db/migrate')) as { runMigrations: () => Promise<void> }
     await mod.runMigrations()
   } catch (err) {
     log.error({ err }, 'Database migration failed on startup')
     process.exit(1)
   }
 
-  const app = new OpenAPIHono()
+  const app = new OpenAPIHono<AppEnv>()
 
   // Attach trace id middleware (W3C traceparent + X-Trace-ID)
   app.use('*', traceIdMiddleware())
@@ -35,7 +37,7 @@ async function bootstrap() {
   // Attach auth middleware (checks Bearer token, with whitelist)
   app.use('*', authMiddleware())
 
-  app.get('/', (c: any) => {
+  app.get('/', (c: AppContext) => {
     return c.text('Hello Hono!')
   })
 

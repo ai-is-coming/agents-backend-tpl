@@ -40,9 +40,7 @@ export function logEnvOnStartup(): void {
     for (const key of keys) {
       const raw = process.env[key] ?? ''
       const value = String(raw)
-      const masked = isSensitiveKey(key)
-        ? MaskData.maskPassword(value, maskOptions)
-        : value
+      const masked = isSensitiveKey(key) ? MaskData.maskPassword(value, maskOptions) : value
       log.info(`${key}=${masked}`)
     }
     log.info('--- End environment variables ---')
@@ -51,4 +49,3 @@ export function logEnvOnStartup(): void {
     log.warn({ err }, 'failed to print environment variables')
   }
 }
-

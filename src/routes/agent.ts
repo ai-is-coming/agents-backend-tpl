@@ -1,27 +1,48 @@
-import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
+import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
+import type { UIMessage } from 'ai'
 import { rootAgent as defaultAgent } from '../agents'
-import { AgentChatRequestSchema, AgentChatResponseSchema } from '../schemas/agent'
 import { prisma } from '../db/prisma'
+import { AgentChatRequestSchema, AgentChatResponseSchema } from '../schemas/agent'
+import type { AppEnv } from '../types/hono'
+import { createLogger } from '../utils/logger'
 import { getOrCreateUserByToken } from '../utils/user'
 
-type ChatAgent = {
-  generate: (input: {
-    prompt: string
-    stream?: boolean
-    webSearch?: boolean
-    provider?: string
-    model?: string
-    abortSignal?: AbortSignal
-  }) => Promise<Response | { text: string }>
+const log = createLogger('agent')
+
+// Type for JSON values that can be stored in Prisma
+type JsonValue = string | number | boolean | null | { [key: string]: JsonValue } | JsonValue[]
+
+// Type definitions for message content
+type MessageContent =
+  | { text: string }
+  | {
+      type: 'tool'
+      toolCallId: string
+      name: string
+      status?: string
+      input?: JsonValue
+      inputText?: string
+      output?: JsonValue
+      errorText?: string
+      toolName?: string
+    }
+
+type HistoryMessage = {
+  role: string
+  content: JsonValue
 }
 
+type ChatAgent = {
+  // biome-ignore lint/suspicious/noExplicitAny: messages type varies based on agent implementation
+  generate: (input: any) => Promise<Response | { text: string }>
+}
 
 // Track active streaming runs per session to support server-side cancellation
 type ActiveRun = { runKey: string; cancel: () => void }
-const activeRuns = new Map<number, ActiveRun>()
+const activeRuns = new Map<string, ActiveRun>()
 
 export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
-  const router = new OpenAPIHono()
+  const router = new OpenAPIHono<AppEnv>()
 
   const chatRoute = createRoute({
     method: 'post',
@@ -49,10 +70,11 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
     },
   })
 
-  router.openapi(chatRoute, async (c: any) => {
-    const { sessionId, prompt, stream, webSearch, provider, model } = c.req.valid('json')
-    const traceId = (c.get('traceId') as string | undefined) ?? ''.padStart(32, '0')
-    const token = c.get('token') as string | undefined
+  // biome-ignore lint/suspicious/noExplicitAny: Returns Response for streaming, not compatible with OpenAPI schema
+  router.openapi(chatRoute, async (c): Promise<any> => {
+    const { sessionId: sessionIdStr, prompt, stream, webSearch, provider, model } = c.req.valid('json')
+    const traceId = c.get('traceId') ?? ''.padStart(32, '0')
+    const token = c.get('token')
 
     try {
       // If no auth token (e.g., unit tests), skip persistence and ownership checks
@@ -62,124 +84,101 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
         return c.json({ text: result.text })
       }
 
+      // Convert sessionId from string to BigInt for database queries
+      let sessionId: bigint
+      try {
+        sessionId = BigInt(sessionIdStr)
+        if (sessionId <= 0n) {
+          return c.json({ error: 'Invalid session ID' }, 400)
+        }
+      } catch {
+        return c.json({ error: 'Invalid session ID format' }, 400)
+      }
+
       // Verify ownership and persist user message
       const user = await getOrCreateUserByToken(c)
-      const session = await prisma.chatSession.findFirst({ where: { id: sessionId, user_id: user.id } })
+      const session = await prisma.chat_sessions.findFirst({
+        where: { id: sessionId, user_id: user.id },
+      })
       if (!session) return c.json({ error: 'Forbidden' }, 403)
 
       // If session was created without a title, set it to the first 50 chars of the first prompt
       if (!session.title || session.title === 'New Chat') {
         const newTitle = (prompt || '').trim().slice(0, 50)
         if (newTitle) {
-          await prisma.chatSession.update({ where: { id: sessionId }, data: { title: newTitle } })
+          await prisma.chat_sessions.update({ where: { id: sessionId }, data: { title: newTitle } })
         }
       }
 
       // Cancel any previous active run for this session (superseded by new prompt)
       {
-        const prev = activeRuns.get(sessionId)
+        const sessionKey = sessionId.toString()
+        const prev = activeRuns.get(sessionKey)
         if (prev) {
-          try { prev.cancel() } catch {}
-          activeRuns.delete(sessionId)
+          try {
+            prev.cancel()
+          } catch {}
+          activeRuns.delete(sessionKey)
         }
       }
 
-
-      await prisma.chatMessage.create({
+      await prisma.chat_messages.create({
         data: {
           session_id: sessionId,
           role: 'user',
           trace_id: traceId,
-          content: { text: prompt } as any,
+          content: { text: prompt } as MessageContent,
         },
       })
 
-      // Prepare recent conversation context (user/assistant/tool), limit via env CHAT_HISTORY_LIMIT
+      // Prepare recent conversation context (user/assistant only), limit via env CHAT_HISTORY_LIMIT
+      // TODO: Properly convert tool messages to UIMessage format
       const limitFromEnv = Number(process.env.CHAT_HISTORY_LIMIT)
       const historyLimit = Number.isFinite(limitFromEnv) && limitFromEnv > 0 ? Math.min(limitFromEnv, 1000) : 50
 
-      const history = await prisma.chatMessage.findMany({
-        where: { session_id: sessionId, role: { in: ['user', 'assistant', 'tool'] as any } },
+      const history = await prisma.chat_messages.findMany({
+        where: { session_id: sessionId, role: { in: ['user', 'assistant'] } },
         orderBy: { id: 'desc' },
         take: historyLimit,
-        select: { role: true, content: true },
+        select: { id: true, role: true, content: true },
       })
       history.reverse()
 
-      const messagesForModel: Array<{ role: 'user' | 'assistant' | 'tool'; content: any }> = []
-      for (let i = 0; i < history.length; i++) {
-        const m: any = history[i]
-        const anyContent: any = (m as any).content
-
-        if ((m as any).role === 'tool') {
-          const c: any = anyContent || {}
-          let toolCallId = String(c.toolCallId || '')
-          const toolName = String(c.name || c.toolName || 'unknown_tool')
-          if (!toolCallId) toolCallId = `hist_${i}`
-
-          // Prepare input part for the synthetic assistant tool-call
-          const inputVal = typeof c.input !== 'undefined' ? c.input : (c.inputText ?? undefined)
-          const inputPart = typeof inputVal === 'string' ? inputVal : (typeof inputVal !== 'undefined' ? inputVal : {})
-
-          // 1) Insert a synthetic assistant message that contains the tool-call part
-          messagesForModel.push({
-            role: 'assistant',
-            content: [
-              {
-                type: 'tool-call',
-                toolCallId,
-                toolName,
-                input: inputPart,
-              },
-            ],
-          })
-
-          // 2) Then insert the tool result message with matching id
-          let outputPart: any
-          if (typeof c.errorText !== 'undefined' && c.errorText !== null) {
-            outputPart = typeof c.errorText === 'string'
-              ? { type: 'error-text', value: c.errorText }
-              : { type: 'error-json', value: c.errorText }
-          } else if (typeof c.output !== 'undefined') {
-            outputPart = typeof c.output === 'string'
-              ? { type: 'text', value: c.output }
-              : { type: 'json', value: c.output }
-          } else if (typeof c.input !== 'undefined') {
-            outputPart = typeof c.input === 'string'
-              ? { type: 'text', value: c.input }
-              : { type: 'json', value: c.input }
-          } else {
-            outputPart = { type: 'json', value: {} }
-          }
-
-          messagesForModel.push({
-            role: 'tool',
-            content: [
-              {
-                type: 'tool-result',
-                toolCallId,
-                toolName,
-                output: outputPart,
-              },
-            ],
-          })
-          continue
-        }
+      const messagesForModel: UIMessage[] = []
+      for (const m of history) {
+        const histMsg = m as HistoryMessage & { id: bigint }
+        const anyContent = histMsg.content
 
         const text =
-          typeof anyContent?.text === 'string'
+          typeof anyContent === 'object' &&
+          anyContent !== null &&
+          !Array.isArray(anyContent) &&
+          'text' in anyContent &&
+          typeof anyContent.text === 'string'
             ? anyContent.text
             : typeof anyContent === 'string'
               ? anyContent
               : JSON.stringify(anyContent)
 
-        messagesForModel.push({ role: (m as any).role as 'user' | 'assistant', content: text })
+        messagesForModel.push({
+          id: histMsg.id.toString(),
+          role: histMsg.role as 'user' | 'assistant',
+          parts: [{ type: 'text', text }],
+        })
       }
 
       // Abort controller to propagate explicit cancellation to the agent/LLM
       const serverAbort = new AbortController()
 
-      const result = await agent.generate({ prompt, stream, webSearch, provider, model, abortSignal: serverAbort.signal, messages: messagesForModel } as any)
+      const result = await agent.generate({
+        prompt,
+        stream,
+        webSearch,
+        provider,
+        model,
+        abortSignal: serverAbort.signal,
+        messages: messagesForModel,
+      })
 
       if (result instanceof Response) {
         // Pass through the stream to the client while accumulating assistant text,
@@ -188,7 +187,7 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
         const contentType = res.headers.get('content-type') || ''
         const body = res.body
         if (!body) {
-          await prisma.chatSession.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
+          await prisma.chat_sessions.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
           return res
         }
 
@@ -199,54 +198,63 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
 
         // Register this run for server-side cancellation (supersede on next prompt)
         const runKey = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-        activeRuns.set(sessionId, {
+        const sessionKey = sessionId.toString()
+        activeRuns.set(sessionKey, {
           runKey,
           cancel: () => {
-            try { readerClient.cancel() } catch {}
-            try { readerPersist.cancel() } catch {}
-            try { serverAbort.abort() } catch {}
+            try {
+              readerClient.cancel()
+            } catch {}
+            try {
+              readerPersist.cancel()
+            } catch {}
+            try {
+              serverAbort.abort()
+            } catch {}
           },
         })
 
-
         // Accumulator for the CURRENT assistant text segment (pre-tool or post-tool)
         let accText = ''
-        let assistantMsgId: number | null = null
+        let assistantMsgId: bigint | null = null
         let lastPersistedLen = 0
         let lastPersistAt = Date.now()
 
         // Tool call state keyed by toolCallId
-        const toolState = new Map<string, {
-          id: number | null
-          name?: string
-          status?: string
-          inputText?: string
-          input?: any
-          output?: any
-          errorText?: string
-          lastLen?: number
-          lastAt?: number
-        }>()
+        const toolState = new Map<
+          string,
+          {
+            id: bigint | null
+            name?: string
+            status?: string
+            inputText?: string
+            input?: JsonValue
+            output?: JsonValue
+            errorText?: string
+            lastLen?: number
+            lastAt?: number
+          }
+        >()
 
         const persistAssistant = async () => {
           try {
-            await prisma.chatSession.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
+            await prisma.chat_sessions.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
             if (!accText || accText.length === lastPersistedLen) return
             if (assistantMsgId == null) {
-              const m = await prisma.chatMessage.create({
+              const m = await prisma.chat_messages.create({
                 data: {
                   session_id: sessionId,
                   role: 'assistant',
                   trace_id: traceId,
-                  content: { text: accText } as any,
+                  content: { text: accText } as MessageContent,
                 },
                 select: { id: true },
               })
               assistantMsgId = m.id
             } else {
-              await prisma.chatMessage.update({
+              await prisma.chat_messages.update({
                 where: { id: assistantMsgId },
-                data: { content: { text: accText } as any },
+                data: { content: { text: accText } as MessageContent },
               })
             }
             lastPersistedLen = accText.length
@@ -266,30 +274,34 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
 
         const persistTool = async (toolCallId: string, force = false) => {
           try {
-            await prisma.chatSession.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
+            await prisma.chat_sessions.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
             const st = toolState.get(toolCallId)
             if (!st) return
-            const content = {
+            const content: MessageContent = {
               type: 'tool',
               toolCallId,
               name: st.name || '',
               status: st.status || 'input-streaming',
-              input: typeof st.input !== 'undefined' ? st.input : (st.inputText || undefined),
+              input: typeof st.input !== 'undefined' ? st.input : st.inputText || undefined,
               output: typeof st.output !== 'undefined' ? st.output : undefined,
               errorText: st.errorText,
-            } as any
+            }
             const curLen = JSON.stringify(content).length
-            const shouldWrite = force || typeof st.lastLen !== 'number' || curLen - (st.lastLen || 0) >= 64 || (Date.now() - (st.lastAt || 0)) >= 300
+            const shouldWrite =
+              force ||
+              typeof st.lastLen !== 'number' ||
+              curLen - (st.lastLen || 0) >= 64 ||
+              Date.now() - (st.lastAt || 0) >= 300
             if (!shouldWrite) return
 
             if (st.id == null) {
-              const m = await prisma.chatMessage.create({
+              const m = await prisma.chat_messages.create({
                 data: { session_id: sessionId, role: 'tool', trace_id: traceId, content },
                 select: { id: true },
               })
               st.id = m.id
             } else {
-              await prisma.chatMessage.update({ where: { id: st.id }, data: { content } })
+              await prisma.chat_messages.update({ where: { id: st.id }, data: { content } })
             }
             st.lastLen = curLen
             st.lastAt = Date.now()
@@ -298,9 +310,8 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
           }
         }
 
-
         // Background persist loop: continue accumulating and saving even if client disconnects
-        const persistLoop = (async () => {
+        const _persistLoop = (async () => {
           try {
             let buffer2 = ''
             while (true) {
@@ -311,8 +322,8 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                 const chunk = decoder.decode(value, { stream: true })
                 if (contentType.includes('text/event-stream')) {
                   buffer2 += chunk
-                  let idx2
-                  while ((idx2 = buffer2.indexOf('\n\n')) !== -1) {
+                  let idx2 = buffer2.indexOf('\n\n')
+                  while (idx2 !== -1) {
                     const frame = buffer2.slice(0, idx2)
                     buffer2 = buffer2.slice(idx2 + 2)
                     const lines = frame.split('\n')
@@ -326,16 +337,29 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                         if (obj && typeof obj === 'object') {
                           switch (obj.type) {
                             case 'text-delta':
-                              if (typeof obj.delta === 'string') { accText += obj.delta; newTextAdded = true }
+                              if (typeof obj.delta === 'string') {
+                                accText += obj.delta
+                                newTextAdded = true
+                              }
                               break
                             case 'text':
-                              if (typeof obj.text === 'string') { accText += obj.text; newTextAdded = true }
+                              if (typeof obj.text === 'string') {
+                                accText += obj.text
+                                newTextAdded = true
+                              }
                               break
                             case 'tool-input-start': {
                               // finalize current text segment before tool
                               await flushAssistantAndReset()
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id)) toolState.set(id, { id: null, name: obj.toolName || '', status: 'input-streaming', lastLen: 0, lastAt: 0 })
+                              if (!toolState.has(id))
+                                toolState.set(id, {
+                                  id: null,
+                                  name: obj.toolName || '',
+                                  status: 'input-streaming',
+                                  lastLen: 0,
+                                  lastAt: 0,
+                                })
                               const st = toolState.get(id)!
                               st.name = obj.toolName || st.name
                               st.status = 'input-streaming'
@@ -344,7 +368,14 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                             }
                             case 'tool-input-delta': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id)) toolState.set(id, { id: null, name: obj.toolName || '', status: 'input-streaming', lastLen: 0, lastAt: 0 })
+                              if (!toolState.has(id))
+                                toolState.set(id, {
+                                  id: null,
+                                  name: obj.toolName || '',
+                                  status: 'input-streaming',
+                                  lastLen: 0,
+                                  lastAt: 0,
+                                })
                               const st = toolState.get(id)!
                               st.name = obj.toolName || st.name
                               st.inputText = (st.inputText || '') + (obj.delta || '')
@@ -354,7 +385,8 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                             }
                             case 'tool-input-available': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id)) toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
+                              if (!toolState.has(id))
+                                toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
                               const st = toolState.get(id)!
                               st.name = obj.toolName || st.name
                               st.input = obj.input
@@ -364,7 +396,8 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                             }
                             case 'tool-input-error': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id)) toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
+                              if (!toolState.has(id))
+                                toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
                               const st = toolState.get(id)!
                               st.name = obj.toolName || st.name
                               st.input = obj.input ?? st.input
@@ -375,7 +408,8 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                             }
                             case 'tool-output-available': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id)) toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
+                              if (!toolState.has(id))
+                                toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
                               const st = toolState.get(id)!
                               st.name = obj.toolName || st.name
                               st.output = obj.output
@@ -385,7 +419,8 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                             }
                             case 'tool-output-error': {
                               const id = String(obj.toolCallId || obj.id || '')
-                              if (!toolState.has(id)) toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
+                              if (!toolState.has(id))
+                                toolState.set(id, { id: null, name: obj.toolName || '', lastLen: 0, lastAt: 0 })
                               const st = toolState.get(id)!
                               st.name = obj.toolName || st.name
                               st.errorText = obj.errorText || 'Tool execution error'
@@ -394,9 +429,16 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                               break
                             }
                             default:
-                              if (typeof obj.text === 'string') { accText += obj.text; newTextAdded = true }
-                              else if (typeof obj.delta === 'string') { accText += obj.delta; newTextAdded = true }
-                              else if (obj?.choices?.[0]?.delta?.content) { accText += obj.choices[0].delta.content; newTextAdded = true }
+                              if (typeof obj.text === 'string') {
+                                accText += obj.text
+                                newTextAdded = true
+                              } else if (typeof obj.delta === 'string') {
+                                accText += obj.delta
+                                newTextAdded = true
+                              } else if (obj?.choices?.[0]?.delta?.content) {
+                                accText += obj.choices[0].delta.content
+                                newTextAdded = true
+                              }
                               break
                           }
                         } else if (typeof obj === 'string') {
@@ -405,9 +447,11 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                         }
                       } catch {
                         // Not JSON – append as plain text
-                        accText += data; newTextAdded = true
+                        accText += data
+                        newTextAdded = true
                       }
                     }
+                    idx2 = buffer2.indexOf('\n\n')
                   }
                 } else {
                   // Non-SSE response: treat as plain text
@@ -422,7 +466,10 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
                 const now = Date.now()
                 const charThreshold = 64
                 const timeThresholdMs = 300
-                if ((accText.length - lastPersistedLen) >= charThreshold || (now - (lastPersistAt ?? 0)) >= timeThresholdMs) {
+                if (
+                  accText.length - lastPersistedLen >= charThreshold ||
+                  now - (lastPersistAt ?? 0) >= timeThresholdMs
+                ) {
                   await persistAssistant()
                   lastPersistAt = now
                 }
@@ -435,9 +482,9 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
               await persistTool(id, true)
             }
             // cleanup active run if still current
-            const cur = activeRuns.get(sessionId)
+            const cur = activeRuns.get(sessionKey)
             if (cur && cur.runKey === runKey) {
-              activeRuns.delete(sessionId)
+              activeRuns.delete(sessionKey)
             }
           }
         })()
@@ -457,7 +504,9 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
           },
           async cancel() {
             // Client disconnected: stop client branch, background loop continues
-            try { await readerClient.cancel() } catch {}
+            try {
+              await readerClient.cancel()
+            } catch {}
             // Ensure latest accumulated text is saved promptly
             await persistAssistant()
           },
@@ -467,18 +516,19 @@ export const createAgentRouter = (agent: ChatAgent = defaultAgent) => {
         return new Response(stream, { status: res.status, headers })
       }
 
-      await prisma.chatMessage.create({
+      await prisma.chat_messages.create({
         data: {
           session_id: sessionId,
           role: 'assistant',
           trace_id: traceId,
-          content: { text: result.text } as any,
+          content: { text: result.text } as MessageContent,
         },
       })
-      await prisma.chatSession.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
+      await prisma.chat_sessions.update({ where: { id: sessionId }, data: { updated_at: new Date() } })
 
       return c.json({ text: result.text })
     } catch (err) {
+      log.error({ err, sessionId: sessionIdStr, prompt: prompt?.substring(0, 100) }, 'Failed to process chat request')
       return c.json({ error: 'Internal Server Error' }, 500)
     }
   })

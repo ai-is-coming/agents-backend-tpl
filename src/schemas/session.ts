@@ -8,7 +8,7 @@ export const SessionCreateRequestSchema = z
 
 export const SessionCreateResponseSchema = z
   .object({
-    sessionId: z.number().int().positive(),
+    sessionId: z.coerce.string().openapi({ example: '123456789' }),
   })
   .openapi('SessionCreateResponse')
 
@@ -20,7 +20,7 @@ export const SessionListQuerySchema = z
   .openapi('SessionListQuery')
 
 export const SessionListItemSchema = z.object({
-  id: z.number().int().positive(),
+  id: z.coerce.string().openapi({ example: '123456789' }),
   title: z.string(),
   status: z.number().int(),
   created_at: z.string(),
@@ -36,12 +36,12 @@ export const SessionListResponseSchema = z
 export const MessageListQuerySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(200).default(50),
-    afterId: z.coerce.number().int().positive().optional(),
+    afterId: z.coerce.string().optional().openapi({ example: '123456789' }),
   })
   .openapi('MessageListQuery')
 
 export const MessageItemSchema = z.object({
-  id: z.number().int().positive(),
+  id: z.coerce.string().openapi({ example: '123456789' }),
   role: z.enum(['user', 'assistant', 'system', 'tool']),
   trace_id: z.string().length(32),
   content: z.any(),
@@ -54,4 +54,3 @@ export const MessageListResponseSchema = z
     messages: z.array(MessageItemSchema),
   })
   .openapi('MessageListResponse')
-
